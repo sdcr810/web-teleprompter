@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Web Teleprompter with Video Recorder</title>
     <style>
         :root {
@@ -11,13 +11,21 @@
             --panel-bg: #222;
             --accent-color: #00adb5;
             --record-color: #ff3333;
+            --border-color: #333;
+            --preview-border: #444;
+            --controls-height: 72px; /* updated dynamically on mobile */
         }
 
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
         }
 
         body {
@@ -29,7 +37,9 @@
             flex-direction: column;
         }
 
-        /* Control Panel Styles */
+        /* =========================
+           CONTROL PANEL
+           ========================= */
         #control-panel {
             background-color: var(--panel-bg);
             padding: 15px 20px;
@@ -38,8 +48,8 @@
             gap: 15px;
             align-items: center;
             justify-content: center;
-            border-bottom: 2px solid #333;
-            z-index: 10;
+            border-bottom: 2px solid var(--border-color);
+            z-index: 20;
         }
 
         .control-group {
@@ -51,6 +61,7 @@
         label {
             font-size: 14px;
             color: #ccc;
+            white-space: nowrap;
         }
 
         input[type="range"] {
@@ -60,52 +71,65 @@
 
         button {
             background-color: var(--accent-color);
-            color: white;
+            color: #fff;
             border: none;
             padding: 8px 16px;
-            border-radius: 4px;
-            font-weight: bold;
+            border-radius: 6px;
+            font-weight: 700;
             cursor: pointer;
-            transition: background 0.2s, transform 0.1s;
+            transition: background 0.2s, transform 0.1s, filter 0.2s;
         }
 
         button:hover {
-            filter: brightness(1.1);
+            filter: brightness(1.08);
         }
 
         button:active {
             transform: scale(0.98);
         }
 
-        #btn-record {
-            background-color: var(--record-color);
-        }
-
         button.secondary {
             background-color: #444;
         }
 
-        /* Main Layout Workspace */
+        button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            filter: none;
+        }
+
+        #btn-record {
+            background-color: var(--record-color);
+        }
+
+        /* =========================
+           MAIN LAYOUT
+           ========================= */
         #workspace {
             display: flex;
             flex: 1;
             position: relative;
             overflow: hidden;
+            min-height: 0;
         }
 
-        /* Prompter Container */
+        /* =========================
+           PROMPTER
+           ========================= */
         #prompter-container {
             flex: 1;
             overflow-y: auto;
             position: relative;
             padding: 40vh 5% 50vh 5%;
             scroll-behavior: auto;
+            min-height: 0;
         }
 
         /* Hide scrollbar */
         #prompter-container::-webkit-scrollbar {
             display: none;
         }
+
         #prompter-container {
             -ms-overflow-style: none;
             scrollbar-width: none;
@@ -118,13 +142,14 @@
             white-space: pre-wrap;
             text-align: center;
             outline: none;
+            word-break: break-word;
         }
 
         .flipped {
             transform: scaleX(-1);
         }
 
-        /* Visual Cue Overlay */
+        /* Visual cue marker */
         #cue-marker {
             position: absolute;
             top: 50%;
@@ -138,32 +163,38 @@
             z-index: 5;
         }
 
-        /* Webcam Preview Window */
+        /* =========================
+           CAMERA PREVIEW
+           ========================= */
         #preview-container {
             width: 240px;
             position: absolute;
             bottom: 20px;
             right: 20px;
             background: #000;
-            border: 2px solid #444;
-            border-radius: 8px;
+            border: 2px solid var(--preview-border);
+            border-radius: 10px;
             overflow: hidden;
-            z-index: 20;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            z-index: 25;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         #webcam-preview {
             width: 100%;
             height: auto;
             display: block;
-            transform: scaleX(-1); /* Mirrors camera view for natural feel */
+            transform: scaleX(-1);
+            background: #000;
         }
 
         #recording-indicator {
             position: absolute;
             top: 8px;
             left: 8px;
-            background: rgba(255, 0, 0, 0.8);
+            background: rgba(255, 0, 0, 0.85);
             color: white;
             padding: 2px 6px;
             font-size: 11px;
@@ -172,266 +203,41 @@
             text-transform: uppercase;
             display: none;
             animation: pulse 1s infinite alternate;
+            z-index: 2;
+        }
+
+        #camera-status {
+            position: absolute;
+            bottom: 8px;
+            left: 8px;
+            right: 8px;
+            font-size: 12px;
+            color: #ddd;
+            background: rgba(0,0,0,0.45);
+            padding: 4px 6px;
+            border-radius: 4px;
+            text-align: center;
+            display: none;
+            z-index: 2;
         }
 
         @keyframes pulse {
             from { opacity: 0.5; }
             to { opacity: 1; }
         }
-    /* Mobile layout: top half text, bottom half camera */
-@media (max-width: 768px) {
-    #workspace {
-        flex-direction: column;
-    }
 
-    #prompter-container {
-        flex: 0 0 50vh;
-        height: 50vh;
-        padding: 18vh 6% 18vh 6%;
-        overflow-y: auto;
-    }
-
-    #preview-container {
-        position: relative;
-        bottom: auto;
-        right: auto;
-        width: 100%;
-        height: 50vh;
-        border-radius: 0;
-        border: none;
-        border-top: 2px solid #444;
-        box-shadow: none;
-    }
-
-    #webcam-preview {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-    }
-
-    #cue-marker {
-        height: 44px;
-        margin-top: -22px;
-    }
-
-    #prompter-text {
-        font-size: 32px;
-        line-height: 1.5;
-    }
-
-    #control-panel {
-        gap: 10px;
-        padding: 10px 12px;
-    }
-
-    button {
-        padding: 8px 12px;
-    }
-}
-    </style>
-</head>
-<body>
-
-    <div id="control-panel">
-        <button id="btn-toggle">Play Text</button>
-        <button id="btn-reset" class="secondary">Reset Text</button>
-        <button id="btn-record">Start Recording</button>
-
-        <div class="control-group">
-            <label for="speed">Speed:</label>
-            <input type="range" id="speed" min="1" max="10" value="3">
-        </div>
-
-        <div class="control-group">
-            <label for="font-size">Size:</label>
-            <input type="range" id="font-size" min="24" max="80" value="44">
-        </div>
-
-        <button id="btn-flip" class="secondary">Flip Script</button>
-    </div>
-
-    <div id="workspace">
-        <div id="prompter-container">
-            <div id="cue-marker"></div>
-            <div id="prompter-text" contenteditable="true">
-Click here to type/paste your script.
-
-When you are ready, hit the red "Start Recording" button. 
-
-The application will simultaneously initiate your camera recording and start scrolling the script text automatically!
-
-Click "Stop Recording" when you are finished to download your video.
-            </div>
-        </div>
-
-        <div id="preview-container">
-            <div id="recording-indicator">REC</div>
-            <video id="webcam-preview" autoplay muted playsinline></video>
-        </div>
-    </div>
-
-    <script>
-        const container = document.getElementById('prompter-container');
-        const textElement = document.getElementById('prompter-text');
-        const btnToggle = document.getElementById('btn-toggle');
-        const btnReset = document.getElementById('btn-reset');
-        const btnFlip = document.getElementById('btn-flip');
-        const btnRecord = document.getElementById('btn-record');
-        const webcamPreview = document.getElementById('webcam-preview');
-        const recIndicator = document.getElementById('recording-indicator');
-        
-        const speedInput = document.getElementById('speed');
-        const fontSizeInput = document.getElementById('font-size');
-
-        let isScrolling = false;
-        let scrollAnimation;
-        let lastTime = 0;
-
-        // Recording State Variables
-        let mediaStream = null;
-        let mediaRecorder = null;
-        let recordedChunks = [];
-        let isRecording = false;
-
-        // Initialize user webcam feed on boot
-        async function setupCamera() {
-            try {
-                mediaStream = await navigator.mediaDevices.getUserMedia({
-                    video: { width: 1280, height: 720 },
-                    audio: true
-                });
-                webcamPreview.srcObject = mediaStream;
-            } catch (err) {
-                console.error("Error accessing camera/microphone: ", err);
-                alert("Could not access camera or microphone. Please check permissions.");
-            }
-        }
-        setupCamera();
-
-        // Font Adjustments
-        fontSizeInput.addEventListener('input', (e) => {
-            textElement.style.fontSize = `${e.target.value}px`;
-        });
-
-        btnFlip.addEventListener('click', () => {
-            textElement.classList.toggle('flipped');
-        });
-
-        // Scroll Engine
-        function scrollStep(timestamp) {
-            if (!isScrolling) return;
-            if (!lastTime) lastTime = timestamp;
-            const elapsed = timestamp - lastTime;
-            const speed = parseFloat(speedInput.value) * 0.05; 
-            
-            container.scrollTop += speed * elapsed;
-
-            lastTime = timestamp;
-            scrollAnimation = requestAnimationFrame(scrollStep);
-        }
-
-        function startScrolling() {
-            isScrolling = true;
-            btnToggle.innerText = "Pause Text";
-            lastTime = 0;
-            scrollAnimation = requestAnimationFrame(scrollStep);
-        }
-
-        function stopScrolling() {
-            isScrolling = false;
-            btnToggle.innerText = "Play Text";
-            cancelAnimationFrame(scrollAnimation);
-        }
-
-        function toggleScrolling() {
-            if (isScrolling) stopScrolling(); else startScrolling();
-        }
-
-        btnToggle.addEventListener('click', toggleScrolling);
-        btnReset.addEventListener('click', () => {
-            stopScrolling();
-            container.scrollTop = 0;
-        });
-
-        // Recording System Logic
-        btnRecord.addEventListener('click', () => {
-            if (!mediaStream) {
-                alert("Camera feed not active.");
-                return;
+        /* =========================
+           MOBILE LAYOUT
+           ========================= */
+        @media (max-width: 768px) {
+            body {
+                height: 100dvh;
+                padding-bottom: calc(var(--controls-height) + env(safe-area-inset-bottom));
             }
 
-            if (!isRecording) {
-                // START RECORDING
-                recordedChunks = [];
-                
-                // Use standard formats widely recognized by operating systems (VP8/VP9 or H264 if supported)
-                let options = { mimeType: 'video/webm;codecs=vp9,opus' };
-                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-                    options = { mimeType: 'video/webm;codecs=vp8,opus' };
-                }
-
-                mediaRecorder = new MediaRecorder(mediaStream, options);
-                
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data && event.data.size > 0) {
-                        recordedChunks.push(event.data);
-                    }
-                };
-
-                mediaRecorder.onstop = () => {
-                    // Turn raw data array buffer into a single downloadable file blob
-                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                    const url = URL.createObjectURL(blob);
-                    
-                    // Create structural mock element to fire automated download link click
-                    const a = document.createElement('a');
-                    a.style.display = 'none';
-                    a.href = url;
-                    a.download = `teleprompter-take-${new Date().toISOString().slice(0,10)}.webm`;
-                    document.body.appendChild(a);
-                    a.click();
-                    
-                    setTimeout(() => {
-                        document.body.removeChild(a);
-                        window.URL.revokeObjectURL(url);
-                    }, 100);
-                };
-
-                mediaRecorder.start(10); // capture data chunks every 10ms
-                
-                isRecording = true;
-                btnRecord.innerText = "Stop Recording";
-                btnRecord.style.backgroundColor = "#333";
-                recIndicator.style.display = "block";
-
-                // Auto-trigger prompter context for unified flow
-                container.scrollTop = 0;
-                startScrolling();
-
-            } else {
-                // STOP RECORDING
-                mediaRecorder.stop();
-                isRecording = false;
-                btnRecord.innerText = "Start Recording";
-                btnRecord.style.backgroundColor = "var(--record-color)";
-                recIndicator.style.display = "none";
-                
-                stopScrolling();
-            }
-        });
-
-        // Global hotkey capture
-        window.addEventListener('keydown', (e) => {
-            if (document.activeElement === textElement) {
-                if (e.key === 'Escape') textElement.blur();
-                return;
-            }
-            if (e.key === ' ' || e.code === 'Space') {
-                e.preventDefault();
-                toggleScrolling();
-            }
-        });
-    </script>
-</body>
-</html>
-
+            #control-panel {
+                position: fixed;
+                left: 0;
+                bottom: 0;
+                width: 100%;
+                min-height: var(--controls-height);
