@@ -241,3 +241,433 @@
                 bottom: 0;
                 width: 100%;
                 min-height: var(--controls-height);
+                border-top: 2px solid var(--border-color);
+                border-bottom: none;
+                padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+                gap: 10px;
+                z-index: 100;
+                background-color: var(--panel-bg);
+            }
+
+            #workspace {
+                flex-direction: column;
+                height: calc(100dvh - var(--controls-height) - env(safe-area-inset-bottom));
+            }
+
+            #prompter-container {
+                flex: 0 0 50%;
+                height: 50%;
+                padding: 12vh 6% 12vh 6%;
+                overflow-y: auto;
+            }
+
+            #preview-container {
+                position: relative;
+                bottom: auto;
+                right: auto;
+                width: 100%;
+                height: 50%;
+                border-radius: 0;
+                border: none;
+                border-top: 2px solid var(--preview-border);
+                box-shadow: none;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                background: #000;
+            }
+
+            #webcam-preview {
+                width: 100%;
+                height: 100%;
+                object-fit: contain; /* preserve aspect ratio, no cropping */
+                transform: scaleX(-1);
+                background: #000;
+            }
+
+            #cue-marker {
+                height: 44px;
+                margin-top: -22px;
+            }
+
+            #prompter-text {
+                font-size: 32px;
+                line-height: 1.5;
+            }
+
+            button {
+                padding: 8px 12px;
+                font-size: 14px;
+            }
+
+            .control-group {
+                gap: 6px;
+            }
+
+            label {
+                font-size: 13px;
+            }
+
+            input[type="range"] {
+                width: 90px;
+            }
+        }
+
+        /* Small phones */
+        @media (max-width: 420px) {
+            #prompter-text {
+                font-size: 28px;
+                line-height: 1.45;
+            }
+
+            button {
+                padding: 7px 10px;
+                font-size: 13px;
+            }
+
+            label {
+                font-size: 12px;
+            }
+
+            input[type="range"] {
+                width: 80px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="control-panel">
+        <button id="btn-toggle">Play Text</button>
+        <button id="btn-reset" class="secondary">Reset Text</button>
+        <button id="btn-record" disabled>Start Recording</button>
+
+        <div class="control-group">
+            <label for="speed">Speed:</label>
+            <input type="range" id="speed" min="1" max="10" value="3" />
+        </div>
+
+        <div class="control-group">
+            <label for="font-size">Size:</label>
+            <input type="range" id="font-size" min="24" max="80" value="44" />
+        </div>
+
+        <button id="btn-flip" class="secondary">Flip Script</button>
+    </div>
+
+    <div id="workspace">
+        <div id="prompter-container">
+            <div id="cue-marker"></div>
+            <div id="prompter-text" contenteditable="true" spellcheck="false">
+Click here to type or paste your script.
+
+When you are ready, tap the red "Start Recording" button. The application will begin recording from your camera and microphone, and it will also start scrolling the script automatically.
+
+Tap "Stop Recording" when you are finished to download your video.
+            </div>
+        </div>
+
+        <div id="preview-container">
+            <div id="recording-indicator">REC</div>
+            <div id="camera-status">Connecting to camera…</div>
+            <video id="webcam-preview" autoplay muted playsinline></video>
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById("prompter-container");
+        const textElement = document.getElementById("prompter-text");
+        const btnToggle = document.getElementById("btn-toggle");
+        const btnReset = document.getElementById("btn-reset");
+        const btnFlip = document.getElementById("btn-flip");
+        const btnRecord = document.getElementById("btn-record");
+        const webcamPreview = document.getElementById("webcam-preview");
+        const recIndicator = document.getElementById("recording-indicator");
+        const cameraStatus = document.getElementById("camera-status");
+        const speedInput = document.getElementById("speed");
+        const fontSizeInput = document.getElementById("font-size");
+        const controlPanel = document.getElementById("control-panel");
+
+        let isScrolling = false;
+        let scrollAnimation = null;
+        let lastTime = 0;
+
+        let mediaStream = null;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let isRecording = false;
+
+        const STORAGE_KEY = "teleprompter-script-v1";
+
+        /* =========================
+           UI / LAYOUT HELPERS
+           ========================= */
+        function updateControlsHeightVar() {
+            const height = controlPanel.offsetHeight || 72;
+            document.documentElement.style.setProperty("--controls-height", `${height}px`);
+        }
+
+        window.addEventListener("resize", updateControlsHeightVar);
+        window.addEventListener("orientationchange", () => {
+            setTimeout(updateControlsHeightVar, 50);
+        });
+
+        /* =========================
+           SCRIPT PERSISTENCE
+           ========================= */
+        function loadSavedScript() {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved && saved.trim()) {
+                textElement.textContent = saved;
+            }
+        }
+
+        function saveScript() {
+            localStorage.setItem(STORAGE_KEY, textElement.textContent);
+        }
+
+        textElement.addEventListener("input", saveScript);
+
+        /* =========================
+           CAMERA SETUP
+           ========================= */
+        function showCameraStatus(message, visible = true) {
+            cameraStatus.textContent = message;
+            cameraStatus.style.display = visible ? "block" : "none";
+        }
+
+        async function setupCamera() {
+            showCameraStatus("Connecting to camera…", true);
+            btnRecord.disabled = true;
+
+            try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        facingMode: "user",
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: true
+                });
+
+                webcamPreview.srcObject = mediaStream;
+                btnRecord.disabled = false;
+                showCameraStatus("Camera ready", true);
+
+                setTimeout(() => {
+                    if (!isRecording) {
+                        showCameraStatus("", false);
+                    }
+                }, 1500);
+            } catch (err) {
+                console.error("Error accessing camera/microphone:", err);
+                showCameraStatus("Camera or microphone unavailable. Check browser permissions.", true);
+                alert("Could not access the camera or microphone. Please check browser permissions.");
+            }
+        }
+
+        /* =========================
+           FONT / SCRIPT TOOLS
+           ========================= */
+        fontSizeInput.addEventListener("input", (e) => {
+            textElement.style.fontSize = `${e.target.value}px`;
+        });
+
+        btnFlip.addEventListener("click", () => {
+            textElement.classList.toggle("flipped");
+        });
+
+        /* =========================
+           SCROLL ENGINE
+           ========================= */
+        function scrollStep(timestamp) {
+            if (!isScrolling) return;
+
+            if (!lastTime) lastTime = timestamp;
+
+            const elapsed = timestamp - lastTime;
+            const speed = parseFloat(speedInput.value) * 0.05;
+
+            container.scrollTop += speed * elapsed;
+            lastTime = timestamp;
+
+            const maxScroll = container.scrollHeight - container.clientHeight;
+            if (container.scrollTop >= maxScroll - 1) {
+                stopScrolling();
+                return;
+            }
+
+            scrollAnimation = requestAnimationFrame(scrollStep);
+        }
+
+        function startScrolling() {
+            if (isScrolling) return;
+            isScrolling = true;
+            btnToggle.innerText = "Pause Text";
+            lastTime = 0;
+            scrollAnimation = requestAnimationFrame(scrollStep);
+        }
+
+        function stopScrolling() {
+            isScrolling = false;
+            btnToggle.innerText = "Play Text";
+            if (scrollAnimation) {
+                cancelAnimationFrame(scrollAnimation);
+                scrollAnimation = null;
+            }
+        }
+
+        function toggleScrolling() {
+            if (isScrolling) stopScrolling();
+            else startScrolling();
+        }
+
+        btnToggle.addEventListener("click", toggleScrolling);
+
+        btnReset.addEventListener("click", () => {
+            stopScrolling();
+            container.scrollTop = 0;
+        });
+
+        /* =========================
+           RECORDING HELPERS
+           ========================= */
+        function getSupportedRecorderOptions() {
+            const candidates = [
+                "video/webm;codecs=vp9,opus",
+                "video/webm;codecs=vp8,opus",
+                "video/webm"
+            ];
+
+            for (const type of candidates) {
+                if (window.MediaRecorder && MediaRecorder.isTypeSupported(type)) {
+                    return { mimeType: type };
+                }
+            }
+
+            return null;
+        }
+
+        function startRecording() {
+            if (!mediaStream) {
+                alert("Camera feed is not active.");
+                return;
+            }
+
+            if (typeof MediaRecorder === "undefined") {
+                alert("This browser does not support MediaRecorder.");
+                return;
+            }
+
+            recordedChunks = [];
+
+            const options = getSupportedRecorderOptions();
+
+            try {
+                mediaRecorder = options
+                    ? new MediaRecorder(mediaStream, options)
+                    : new MediaRecorder(mediaStream);
+            } catch (err) {
+                console.error("Failed to initialize MediaRecorder:", err);
+                alert("Could not start recording with this browser.");
+                return;
+            }
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = () => {
+                const mimeType = mediaRecorder && mediaRecorder.mimeType
+                    ? mediaRecorder.mimeType
+                    : "video/webm";
+
+                const blob = new Blob(recordedChunks, { type: mimeType });
+                const url = URL.createObjectURL(blob);
+
+                const a = document.createElement("a");
+                a.style.display = "none";
+                a.href = url;
+                a.download = `teleprompter-take-${new Date().toISOString().slice(0, 10)}.webm`;
+                document.body.appendChild(a);
+                a.click();
+
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    window.URL.revokeObjectURL(url);
+                }, 100);
+            };
+
+            mediaRecorder.start(100);
+
+            isRecording = true;
+            btnRecord.innerText = "Stop Recording";
+            btnRecord.style.backgroundColor = "#333";
+            recIndicator.style.display = "block";
+            showCameraStatus("", false);
+
+            container.scrollTop = 0;
+            startScrolling();
+        }
+
+        function stopRecording() {
+            if (mediaRecorder && isRecording) {
+                mediaRecorder.stop();
+            }
+
+            isRecording = false;
+            btnRecord.innerText = "Start Recording";
+            btnRecord.style.backgroundColor = "var(--record-color)";
+            recIndicator.style.display = "none";
+
+            stopScrolling();
+        }
+
+        btnRecord.addEventListener("click", () => {
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        });
+
+        /* =========================
+           KEYBOARD SHORTCUTS
+           ========================= */
+        window.addEventListener("keydown", (e) => {
+            if (document.activeElement === textElement) {
+                if (e.key === "Escape") textElement.blur();
+                return;
+            }
+
+            if (e.key === " " || e.code === "Space") {
+                e.preventDefault();
+                toggleScrolling();
+            }
+        });
+
+        /* =========================
+           CLEANUP
+           ========================= */
+        window.addEventListener("beforeunload", () => {
+            saveScript();
+
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+            }
+        });
+
+        /* =========================
+           INIT
+           ========================= */
+        loadSavedScript();
+        updateControlsHeightVar();
+        setupCamera();
+
+        // Initialize visible font size style to match slider
+        textElement.style.fontSize = `${fontSizeInput.value}px`;
+    </script>
+</body>
+</html>
+``
